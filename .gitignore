@@ -1,0 +1,14 @@
+# Variables de entorno (contiene contraseñas, nunca subir a GitHub)
+.env
+
+# Datos de Elasticsearch
+esdata/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Mac
+.DS_Store
