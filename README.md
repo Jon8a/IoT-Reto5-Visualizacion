@@ -15,9 +15,9 @@ Sistema de monitorización en tiempo real de vehículos industriales usando el s
 
 ```
 ┌─────────────────┐     TCP/JSON     ┌───────────────┐     HTTP      ┌─────────────────┐
-│  Script Python  │ ───────────────► │   Logstash    │ ────────────► │ Elasticsearch 8 │
-│ (5 vehículos    │                  │ (filtros y    │               │ (almacena y     │
-│  simulados)     │                  │  validación)  │               │  indexa datos)  │
+│ Contenedor      │ ───────────────► │   Logstash    │ ────────────► │ Elasticsearch 8 │
+│ Simulador       │                  │ (filtros y    │               │ (almacena y     │
+│ (5 vehículos)   │                  │  validación)  │               │  indexa datos)  │
 └─────────────────┘                  └───────────────┘               └────────┬────────┘
                                                                               │
                                                                               │ HTTP
@@ -38,7 +38,7 @@ Sistema de monitorización en tiempo real de vehículos industriales usando el s
 - **Logstash** — Pipeline de ingestión con filtros y validación
 - **Kibana** — Visualización, dashboards, mapas y alertas
 - **Docker Compose** — Orquestación de servicios
-- **Python** — Simulador de flota de vehículos
+- **Python (Dockerizado)** — Simulador de flota y automatización del despliegue
 
 ---
 
@@ -73,40 +73,9 @@ El proceso tarda ~2 minutos. Puedes ver los logs con:
 docker compose logs -f
 ```
 
-Cuando veas que el setup ha terminado (`Setup completado!`), continúa.
+Cuando el proceso termine y el contenedor `kibana-setup` muestre éxito, toda la simulación estará enviando datos automáticamente a Elasticsearch.
 
-### 3. Configurar el índice en Elasticsearch
-
-```bash
-cd scripts
-pip install -r requirements.txt
-python setup_index.py
-```
-
-### 4. Iniciar el simulador de flota
-
-```bash
-python simulate_fleet.py
-```
-
-Verás los datos de los 5 camiones en la consola cada 3 segundos. Déjalo corriendo.
-
-### 5. Montar el dashboard y el mapa automáticamente
-
-Abre **otra terminal** y ejecuta:
-
-```bash
-python setup_kibana.py
-```
-
-Esto crea automáticamente:
-- ✅ Index pattern
-- ✅ 5 visualizaciones (métricas, velocidad, temperatura, combustible, tabla)
-- ✅ Mapa con posición GPS en tiempo real
-- ✅ Dashboard principal con todo integrado
-- ✅ 3 alertas (velocidad, temperatura, combustible)
-
-### 6. Acceder a Kibana
+### 3. Acceder a Kibana
 
 Abre el navegador en: **http://localhost:5601**
 
@@ -114,11 +83,11 @@ Abre el navegador en: **http://localhost:5601**
 |------------|---------------------|----------------------------------|
 | `elastic`  | `ElasticPass2024!`  | Administrador total              |
 | `operador` | `OperatorPass2024!` | Solo lectura de dashboards       |
-| `conductor`| `DriverPass2024!`   | Solo lectura de datos de flota   |
+| `conductor`| `DriverPass2024!`   | Solo lectura de su vehículo (DLS)|
 
 > ⚠️ Si cambiaste las contraseñas en `.env`, usa las que hayas configurado.
 
-### 7. Configurar el dashboard
+### 4. Configurar el dashboard
 
 1. Ve a **Analytics → Maps** para ver los vehículos en el mapa
 2. Ve a **Analytics → Dashboards** para ver los gráficos
@@ -133,7 +102,7 @@ Abre el navegador en: **http://localhost:5601**
 | 🗺️ Mapa             | Posición en tiempo real de cada vehículo         |
 | 📈 Time series       | Evolución de velocidad por vehículo              |
 | 🌡️ Gauge             | Temperatura del motor en tiempo real             |
-| ⛽ Barras            | Nivel de combustible comparado entre vehículos   |
+| ⛽ Barras            | Nivel de combustible actual (en tiempo real)     |
 | 📋 Tabla             | Estado actual de toda la flota                   |
 | 🔢 Métricas          | Nº de vehículos activos / en alerta              |
 
@@ -143,6 +112,7 @@ Abre el navegador en: **http://localhost:5601**
 
 - **Autenticación activada** en Elasticsearch 8 (por defecto en v8)
 - **3 roles diferenciados**: admin, operador, conductor
+- **Document Level Security (DLS)**: El rol de conductor utiliza seguridad a nivel de documento dinámico (`_user.full_name`) para ver única y exclusivamente la telemetría de su vehículo asignado. Se habilita automáticamente una licencia Trial de 30 días en el setup para esta función.
 - **Contraseñas en variables de entorno** (fichero `.env` excluido de Git)
 - **`.gitignore`** configurado para no exponer credenciales
 
@@ -165,11 +135,12 @@ Para configurarlas: **Stack Management → Rules → Create rule → Elasticsear
 1. Diseño de la arquitectura ELK con Docker Compose
 2. Configuración de Elasticsearch 8 con seguridad activada
 3. Diseño del pipeline de Logstash con filtros de validación
-4. Desarrollo del simulador Python con rutas GPS reales del País Vasco
+4. Desarrollo y contenerización del simulador Python con rutas GPS reales del País Vasco
 5. Creación del index template con `geo_point` para el mapa
-6. Configuración de roles y usuarios en Elasticsearch
+6. Configuración de roles y usuarios en Elasticsearch (con licencia Trial automatizada)
 7. Creación del dashboard en Kibana con 6 tipos de gráficos
 8. Configuración de alertas automáticas
+9. Automatización de despliegue "Zero-touch" integrando el setup de Kibana y el simulador en Docker Compose
 
 ---
 
@@ -187,9 +158,10 @@ Para configurarlas: **Stack Management → Rules → Create rule → Elasticsear
 
 ## ⚠️ Problemas / Retos encontrados
 
-- Elasticsearch 8 tiene seguridad activada por defecto, requirió configurar el servicio `setup` para crear usuarios antes de arrancar Kibana
-- El campo `geo_point` debe definirse en el mapping antes de insertar datos, de lo contrario Kibana no reconoce el campo para el mapa
-- Logstash tarda más en arrancar que Elasticsearch; los healthchecks de Docker Compose fueron clave para gestionar el orden de arranque
+- **Seguridad nativa**: Elasticsearch 8 tiene seguridad activada por defecto, requirió configurar el servicio `setup` para crear usuarios y roles de forma automatizada antes de arrancar Kibana.
+- **Mapeos dinámicos y Race Conditions**: El campo `geo_point` de localización debe definirse antes de insertar datos. Si el simulador envía datos antes de crear el template, Elasticsearch infería tipos erróneos (`text` en lugar de `keyword` para IDs, rompiendo agregaciones de Kibana). Esto se solucionó moviendo la inyección del Index Template al contenedor de setup en Docker Compose, garantizando el orden correcto de inicialización.
+- **Sincronización de contenedores**: Logstash tarda más en arrancar que Elasticsearch; los healthchecks de Docker Compose fueron clave para gestionar el orden de arranque de toda la pila.
+- **Limitaciones de visualizaciones Kibana**: Ordenar buckets de "Terms" por métricas de "Top Hits" (para mostrar valores actuales de combustible) no está permitido directamente. Se resolvió ordenando alfabéticamente por la clave (`_key`).
 
 ---
 
@@ -215,5 +187,3 @@ docker compose down -v
 
 ---
 
-*Proyecto desarrollado para la asignatura IoT Industrial — Universidad de Deusto, 2026*
-*Profesor: Gorka Zárate*

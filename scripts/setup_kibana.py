@@ -24,8 +24,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-KIBANA_URL  = f"http://localhost:{os.getenv('KIBANA_PORT', 5601)}"
-ES_URL      = f"http://localhost:{os.getenv('ES_PORT', 9200)}"
+KIBANA_HOST = os.getenv("KIBANA_HOST", "localhost")
+ES_HOST     = os.getenv("ES_HOST", "localhost")
+KIBANA_URL  = f"http://{KIBANA_HOST}:{os.getenv('KIBANA_PORT', 5601)}"
+ES_URL      = f"http://{ES_HOST}:{os.getenv('ES_PORT', 9200)}"
 ELASTIC_USER = "elastic"
 ELASTIC_PASS = os.getenv("ELASTIC_PASSWORD", "ElasticPass2024!")
 
@@ -276,10 +278,10 @@ def create_all_visualizations():
                 "times": [], "addTimeMarker": False
             },
             "aggs": [
-                {"id": "1", "enabled": True, "type": "avg", "schema": "metric",
-                 "params": {"field": "fuel_level_pct", "customLabel": "Combustible medio (%)"}},
+                {"id": "1", "enabled": True, "type": "top_hits", "schema": "metric",
+                 "params": {"field": "fuel_level_pct", "aggregate": "min", "size": 1, "sortField": "@timestamp", "sortOrder": "desc", "customLabel": "Nivel Actual (%)"}},
                 {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
-                 "params": {"field": "vehicle_id", "orderBy": "1", "order": "desc",
+                 "params": {"field": "vehicle_id", "orderBy": "_key", "order": "desc",
                             "size": 5, "customLabel": "Vehículo"}}
             ]
         }

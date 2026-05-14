@@ -117,21 +117,69 @@ services:
           -H "Content-Type: application/json" \
           -d "{\"password\":\"$$OPERATOR_PASSWORD\",\"roles\":[\"operador\"],\"full_name\":\"Operador de Flota\"}";
 
+        echo "Creando Index Template para fleet-vehicles-*...";
+        curl -s -X PUT -u elastic:$$ELASTIC_PASSWORD \
+          "http://elasticsearch:9200/_index_template/fleet-template" \
+          -H "Content-Type: application/json" \
+          -d "{\"index_patterns\":[\"fleet-vehicles-*\"],\"template\":{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0},\"mappings\":{\"properties\":{\"@timestamp\":{\"type\":\"date\"},\"vehicle_id\":{\"type\":\"keyword\"},\"driver\":{\"type\":\"keyword\"},\"route_name\":{\"type\":\"keyword\"},\"location\":{\"type\":\"geo_point\"},\"speed_kmh\":{\"type\":\"float\"},\"engine_temp_c\":{\"type\":\"float\"},\"fuel_level_pct\":{\"type\":\"float\"},\"status\":{\"type\":\"keyword\"},\"temp_status\":{\"type\":\"keyword\"},\"processed_by\":{\"type\":\"keyword\"}}}}}";
+
+        echo "Activando licencia Trial para funciones avanzadas (DLS)...";
+        curl -s -X POST -u elastic:$$ELASTIC_PASSWORD \
+          "http://elasticsearch:9200/_license/start_trial?acknowledge=true" \
+          -H "Content-Type: application/json";
+
         echo "Creando rol conductor (solo su vehiculo)...";
         curl -s -X POST -u elastic:$$ELASTIC_PASSWORD \
           http://elasticsearch:9200/_security/role/conductor \
           -H "Content-Type: application/json" \
-          -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"fleet-*\"],\"privileges\":[\"read\"]}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"read\"],\"resources\":[\"*\"]}]}";
+          -d "{\"cluster\":[\"monitor\"],\"indices\":[{\"names\":[\"fleet-*\"],\"privileges\":[\"read\"],\"query\":\"{\\\"template\\\":{\\\"source\\\":{\\\"term\\\":{\\\"driver\\\":\\\"{{_user.full_name}}\\\"}}}}\"}],\"applications\":[{\"application\":\"kibana-.kibana\",\"privileges\":[\"read\"],\"resources\":[\"*\"]}]}";
 
         echo "Creando usuario conductor...";
         curl -s -X POST -u elastic:$$ELASTIC_PASSWORD \
           http://elasticsearch:9200/_security/user/conductor \
           -H "Content-Type: application/json" \
-          -d "{\"password\":\"$$DRIVER_PASSWORD\",\"roles\":[\"conductor\"],\"full_name\":\"Conductor\"}";
+          -d "{\"password\":\"$$DRIVER_PASSWORD\",\"roles\":[\"conductor\"],\"full_name\":\"Conductor-1\"}";
 
         echo "Setup completado!";
       '
     restart: on-failure
+
+  # ─────────────────────────────────────────
+  # SIMULATOR: envía datos a Logstash
+  # ─────────────────────────────────────────
+  simulator:
+    build: .
+    container_name: simulator
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      - LOGSTASH_HOST=logstash
+      - LOGSTASH_PORT=5044
+    networks:
+      - elastic-net
+    command: python scripts/simulate_fleet.py
+
+  # ─────────────────────────────────────────
+  # KIBANA SETUP: configura dashboards
+  # ─────────────────────────────────────────
+  kibana-setup:
+    build: .
+    container_name: kibana-setup
+    depends_on:
+      kibana:
+        condition: service_healthy
+      simulator:
+        condition: service_started
+    environment:
+      - KIBANA_HOST=kibana
+      - KIBANA_PORT=5601
+      - ES_HOST=elasticsearch
+      - ES_PORT=9200
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    networks:
+      - elastic-net
+    command: python scripts/setup_kibana.py
 
 volumes:
   esdata:
